@@ -190,7 +190,9 @@ namespace Bengsfort.Unity
         #endregion
 
         #region PreferencesView
-
+        /// <summary>
+        /// Render function for the preferences view.
+        /// </summary>
         [PreferenceItem("WakaTime")]
         static void WakaTimePreferencesView()
         {
@@ -211,6 +213,9 @@ namespace Bengsfort.Unity
             var githubButton = GUILayout.Button("Github", GUILayout.Height(38));
             EditorGUILayout.EndHorizontal();
 
+            if (githubButton)
+                Application.OpenURL(GithubRepo);
+
             EditorGUILayout.Separator();
 
             // Main integration settings
@@ -223,6 +228,10 @@ namespace Bengsfort.Unity
             Enabled = GUILayout.Toggle(Enabled, "");
             EditorGUILayout.EndHorizontal();
 
+            // Don't show the rest of the items if its not even enabled
+            if (!Enabled)
+                return;
+
             // API Key field
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.PrefixLabel("API Key (" + (ApiKeyValidated ? "Validated" : "Invalid") + ")");
@@ -232,10 +241,9 @@ namespace Bengsfort.Unity
             EditorGUILayout.EndVertical();
             EditorGUILayout.EndHorizontal();
 
-            EditorGUILayout.EndVertical();
+            // @todo: Project dropdown list so you can specify the current project.
 
-            if (githubButton)
-                Application.OpenURL(GithubRepo);
+            EditorGUILayout.EndVertical();
 
             if (GUI.changed)
             {
