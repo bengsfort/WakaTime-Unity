@@ -9,7 +9,9 @@
 namespace Bengsfort.Unity
 {
     using System;
+    using System.Threading;
     using System.Collections;
+    using System.Collections.Generic;
     using UnityEngine;
     using UnityEngine.Networking;
     using UnityEditor;
@@ -83,6 +85,45 @@ namespace Bengsfort.Unity
                 EditorPrefs.SetBool("WakaTime_ValidApiKey", value);
             }
         }
+
+        // @TODO: Don't store this. Should probably instead just store the active
+        // one and only get the full list of projects when showing the preferences.
+        /// <summary>
+        /// The list of the current users projects.
+        /// </summary>
+        public static ProjectSchema[] Projects
+        {
+            get
+            {
+                var json = EditorPrefs.GetString("WakaTime_Projects", "[]");
+                return JsonUtility.FromJson<ProjectSchema[]>(json);
+            }
+            set
+            {
+                var json = JsonUtility.ToJson(value);
+                EditorPrefs.SetString("WakaTime_Projects", json);
+            }
+        }
+
+        /// <summary>
+        /// The project to log time against.
+        /// </summary>
+        public static int ActiveProject
+        {
+            get
+            {
+                return EditorPrefs.GetInt("WakaTime_ActiveProject", 0);
+            }
+            set
+            {
+                EditorPrefs.SetInt("WakaTime_ActiveProject", value);
+            }
+        }
+
+        /// <summary>
+        /// Are we currently retrieving projects?
+        /// </summary>
+        private static bool s_RetrievingProjects;
         #endregion
 
         static WakaTime()
@@ -93,9 +134,18 @@ namespace Bengsfort.Unity
                 return;
             
             // Update prefs?
+            EditorApplication.update += OnUpdate;
+            EditorApplication.playmodeStateChanged += OnPlaymodeStateChanged;
         }
 
         #region EventHandlers
+        /// <summary>
+        /// Callback that fires every frame.
+        /// </summary>
+        static void OnUpdate()
+        {
+            AsyncHelper.Execute();
+        }
 
         /// <summary>
         /// Detect when scripts are reloaded and restart heartbeats
@@ -114,7 +164,6 @@ namespace Bengsfort.Unity
         {
             Debug.Log("<WakaTime> Play mode state has changed!");
             // Triggered by tapping into this event:
-            // EditorApplication.playmodeStateChanged += OnPlaymodeStateChanged;
             if (Application.isPlaying && EditorApplication.isPlayingOrWillChangePlaymode)
             {
 
@@ -171,7 +220,7 @@ namespace Bengsfort.Unity
             }
             // Clear the progress bar and parse the result
             EditorUtility.ClearProgressBar();
-            var result = JsonUtility.FromJson<UserResponseObject>(auth.downloadHandler.text);
+            var result = JsonUtility.FromJson<ResponseSchema<CurrentUserSchema>>(auth.downloadHandler.text);
             Debug.Log(result.ToString());
             // If the result returned an error, the key is likely no good
             if (result.error != null)
@@ -187,6 +236,66 @@ namespace Bengsfort.Unity
                 ApiKeyValidated = true;
             }
         }
+
+        /// <summary>
+        /// Gets the list of the current users projects from the WakaTime API.
+        /// </summary>
+        static void GetUserProjects()
+        {
+            if (!ApiKeyValidated)
+                return;
+            
+            s_RetrievingProjects = true;
+            var www = UnityWebRequest.Get(ApiBase + "users/current/projects?api_key=" + ApiKey);
+
+            // Enqueue handling of the request
+            AsyncHelper.Add(new RequestEnumerator(www.Send(), () =>
+            {
+                var result = JsonUtility.FromJson<ResponseSchema<ProjectSchema[]>>(www.downloadHandler.text);
+
+                Debug.Log(result.ToString());
+                // If the result returned an error, the key is likely no good
+                if (result.error != null)
+                {
+                    Debug.LogError("<WakaTime> Failed to get projects from WakaTime API.");
+                }
+                else
+                {
+                    Debug.Log("<WakaTime> Successfully retrieved project list from WakaTime API.");
+
+                    foreach(ProjectSchema project in result.data)
+                    {
+                        Debug.Log(project.ToString());
+                    }
+
+                    Projects = result.data;
+                }
+
+                // s_RetrievingProjects = false;
+            }));
+        }
+        #endregion
+
+        #region ViewHelpers
+        static string[] GetProjectDropdownOptions()
+        {
+            var projects = Projects;
+            var options = new List<string>();
+            // Initialize a request to get the projects if there are none
+            if (projects.Length == 0 && !s_RetrievingProjects)
+            {
+                GetUserProjects();
+            }
+
+            options.Add("Choose a project");
+            foreach(ProjectSchema project in projects)
+            {
+                options.Add(project.name);
+            }
+
+            return options.ToArray();
+        }
+
         #endregion
 
         #region PreferencesView
@@ -222,15 +331,8 @@ namespace Bengsfort.Unity
             EditorGUILayout.BeginVertical();
             EditorGUILayout.LabelField("Integration Settings", EditorStyles.boldLabel);
             
-            // Enabled checkbox
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.PrefixLabel("Enable WakaTime");
-            Enabled = GUILayout.Toggle(Enabled, "");
-            EditorGUILayout.EndHorizontal();
-
             // Don't show the rest of the items if its not even enabled
-            if (!Enabled)
-                return;
+            Enabled = EditorGUILayout.BeginToggleGroup("Enable WakaTime", Enabled);
 
             // API Key field
             EditorGUILayout.BeginHorizontal();
@@ -241,7 +343,13 @@ namespace Bengsfort.Unity
             EditorGUILayout.EndVertical();
             EditorGUILayout.EndHorizontal();
 
-            // @todo: Project dropdown list so you can specify the current project.
+            // Project selection
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.PrefixLabel("Active Project");
+            ActiveProject = EditorGUILayout.Popup(ActiveProject, GetProjectDropdownOptions());
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.EndToggleGroup();
 
             EditorGUILayout.EndVertical();
 
@@ -261,25 +369,93 @@ namespace Bengsfort.Unity
 
         #endregion
 
-        #region ApiResponseSchemas
-
-        [Serializable]
-        public struct UserResponseObject
+        #region HelperClasses
+        public class RequestEnumerator
         {
-            public string error;
-            public CurrentUserObject data;
+            public IEnumerator status;
 
-            public override string ToString()
+            AsyncOperation m_Request;
+
+            Action m_Callback;
+
+            public IEnumerator Start()
             {
-                return
-                    "UserResponseObject:\n" +
-                    "\terror: " + error + "\n" +
-                    "\tdata: " + data;
+                while (!m_Request.isDone)
+                {
+                    // Not done yet..
+                    yield return null;
+                }
+                // It's done!
+                m_Callback();
+            }
+
+            public RequestEnumerator(AsyncOperation req, Action cb)
+            {
+                m_Request = req;
+                m_Callback = cb;
+                status = Start();
             }
         }
 
+        public static class AsyncHelper
+        {
+            private static readonly Queue<RequestEnumerator> s_Requests = new Queue<RequestEnumerator>();
+
+            public static void Add(RequestEnumerator action)
+            {
+                lock(s_Requests)
+                {
+                    s_Requests.Enqueue(action);
+                }
+            }
+
+            public static void Execute()
+            {
+                if (s_Requests.Count > 0)
+                {
+                    RequestEnumerator action = null;
+
+                    lock(s_Requests)
+                    {
+                        action = s_Requests.Dequeue();
+                    }
+
+                    // Re-queue the action if it is not complete
+                    if (action.status.MoveNext())
+                    {
+                        Add(action);
+                    }
+                }
+            }
+        }
+        #endregion
+
+        #region ApiResponseSchemas
+
+        /// <summary>
+        /// User query API response object.
+        /// </summary>
         [Serializable]
-        public struct CurrentUserObject
+        public struct ResponseSchema<T>
+        {
+            public string error;
+            public T data;
+
+            public override string ToString()
+            {
+                var dataStr = "";
+                return
+                    "UserResponseObject:\n" +
+                    "\terror: " + error + "\n" +
+                    "\tdata: " + data.ToString();
+            }
+        }
+
+        /// <summary>
+        /// User schema from WakaTime API.
+        /// </summary>
+        [Serializable]
+        public struct CurrentUserSchema
         {
             public string username;
             public string display_name;
@@ -290,7 +466,7 @@ namespace Bengsfort.Unity
             public override string ToString()
             {
                 return
-                    "CurrentUserObject:\n" +
+                    "CurrentUserSchema:\n" +
                     "\tusername: " + username + "\n" +
                     "\tdisplay_name: " + display_name + "\n" +
                     "\tfull_name: " + full_name + "\n" +
@@ -299,6 +475,19 @@ namespace Bengsfort.Unity
             }
         }
 
+        [Serializable]
+        public struct ProjectSchema
+        {
+            public string id;
+            public string name;
+
+            public override string ToString()
+            {
+                return "ProjectSchema:\n" +
+                    "\tid: " + id + "\n" + 
+                    "\tname: " + name + "\n";
+            }
+        }
         #endregion
     }
 
