@@ -9,13 +9,15 @@
 namespace Bengsfort.Unity
 {
     using System;
-    using System.Threading;
+    using System.IO;
+    using System.Diagnostics;
     using System.Collections;
     using System.Collections.Generic;
     using UnityEngine;
     using UnityEngine.Networking;
     using UnityEditor;
     using UnityEditor.Callbacks;
+    using UnityEditor.SceneManagement;
 
     [InitializeOnLoad]
     public class WakaTime
@@ -53,6 +55,21 @@ namespace Bengsfort.Unity
             set
             {
                 EditorPrefs.SetBool("WakaTime_Enabled", value);
+            }
+        }
+
+        /// <summary>
+        /// Should version control be used?
+        /// </summary>
+        public static bool EnableVersionControl
+        {
+            get
+            {
+                return EditorPrefs.GetBool("WakaTime_GitEnabled", true);
+            }
+            set
+            {
+                EditorPrefs.SetBool("WakaTime_GitEnabled", value);
             }
         }
 
@@ -143,7 +160,8 @@ namespace Bengsfort.Unity
 
         static WakaTime()
         {
-            Debug.Log("<WakaTime> Constructor being called, yo!");
+            UnityEngine.Debug.Log("<WakaTime> Constructor being called, yo!");
+            SendHeartbeatPost();
 
             if (!Enabled)
                 return;
@@ -169,7 +187,7 @@ namespace Bengsfort.Unity
         static void OnScriptReload()
         {
             // We're back in the editor doing things! start new sesh?
-            Debug.Log("<WakaTime> Back in the engine!");
+            UnityEngine.Debug.Log("<WakaTime> Back in the engine!");
         }
 
         /// <summary>
@@ -177,7 +195,7 @@ namespace Bengsfort.Unity
         /// </summary>
         static void OnPlaymodeStateChanged()
         {
-            Debug.Log("<WakaTime> Play mode state has changed!");
+            UnityEngine.Debug.Log("<WakaTime> Play mode state has changed!");
             // Triggered by tapping into this event:
             if (Application.isPlaying && EditorApplication.isPlayingOrWillChangePlaymode)
             {
@@ -188,6 +206,11 @@ namespace Bengsfort.Unity
         #endregion
 
         #region ApiCalls
+        static string GetApiUrl(string path)
+        {
+            return ApiBase + path + "?api_key=" + ApiKey;
+        }
+
         /// <summary>
         /// Validates an API key.
         /// </summary>
@@ -206,7 +229,7 @@ namespace Bengsfort.Unity
             }
 
             // Initialize a GET request
-            UnityWebRequest auth = UnityWebRequest.Get(ApiBase + "users/current?api_key=" + ApiKey);
+            UnityWebRequest auth = UnityWebRequest.Get(GetApiUrl("users/current"));
             var req = auth.Send();
 
             // Display a progress bar while the request is active
@@ -221,16 +244,16 @@ namespace Bengsfort.Unity
             // Clear the progress bar and parse the result
             EditorUtility.ClearProgressBar();
             var result = JsonUtility.FromJson<ResponseSchema<CurrentUserSchema>>(auth.downloadHandler.text);
-            Debug.Log(result.ToString());
+            UnityEngine.Debug.Log(result.ToString());
             // If the result returned an error, the key is likely no good
             if (result.error != null)
             {
-                Debug.LogError("<WakaTime> Oh no! Couldn't validate the supplied Api Key. Try another one?");
+                UnityEngine.Debug.LogError("<WakaTime> Oh no! Couldn't validate the supplied Api Key. Try another one?");
                 ApiKeyValidated = false;
             }
             else
             {
-                Debug.Log("<WakaTime> Validated Api Key! You're good to go.");
+                UnityEngine.Debug.Log("<WakaTime> Validated Api Key! You're good to go.");
                 User = result.data;
                 ApiKeyValidated = true;
             }
@@ -245,7 +268,7 @@ namespace Bengsfort.Unity
                 return;
             
             s_RetrievingProjects = true;
-            var www = UnityWebRequest.Get(ApiBase + "users/current/projects?api_key=" + ApiKey);
+            var www = UnityWebRequest.Get(GetApiUrl("users/current/projects"));
 
             // Enqueue handling of the request
             AsyncHelper.Add(new RequestEnumerator(www.Send(), () =>
@@ -255,17 +278,17 @@ namespace Bengsfort.Unity
                 // If the result returned an error, the key is likely no good
                 if (result.error != null)
                 {
-                    Debug.LogError("<WakaTime> Failed to get projects from WakaTime API.");
+                    UnityEngine.Debug.LogError("<WakaTime> Failed to get projects from WakaTime API.");
                 }
                 else
                 {
-                    Debug.Log("<WakaTime> Successfully retrieved project list from WakaTime API.");
+                    UnityEngine.Debug.Log("<WakaTime> Successfully retrieved project list from WakaTime API.");
 
                     foreach(ProjectSchema project in result.data)
                     {
                         if (Application.productName == project.name)
                         {
-                            Debug.Log("<WakaTime> Found a project with identical name to current Unity project; setting it to active.");
+                            UnityEngine.Debug.Log("<WakaTime> Found a project with identical name to current Unity project; setting it to active.");
                             ActiveProject = project;
                         }
                     }
@@ -276,13 +299,53 @@ namespace Bengsfort.Unity
                 s_RetrievingProjects = false;
             }));
         }
+
+        static void SendHeartbeatPost()
+        {
+            if (!ApiKeyValidated)
+                return;
+            
+            // Create our heartbeat
+            var heartbeat = JsonUtility.ToJson(new HeartbeatSchema(
+                Path.Combine(
+                    Application.dataPath,
+                    EditorSceneManager.GetActiveScene().path.Substring("Assets/".Length)
+                ),
+                false
+            ));
+            var www = UnityWebRequest.Post(
+                GetApiUrl("users/current/heartbeats"),
+                string.Empty
+            );
+            // Manually add an upload handler so the data isn't corrupted
+            www.uploadHandler = new UploadHandlerRaw(System.Text.Encoding.UTF8.GetBytes(heartbeat));
+            // Set the content type to json since it defaults to www form data
+            www.SetRequestHeader("Content-Type", "application/json");
+            UnityEngine.Debug.Log(www.GetRequestHeader("Content-Type"));
+
+            AsyncHelper.Add(new RequestEnumerator(www.Send(), () =>
+            {
+                UnityEngine.Debug.Log("result!");
+                UnityEngine.Debug.Log(www.downloadHandler.text);
+                var result = JsonUtility.FromJson<ResponseSchema<HeartbeatResponseSchema>>(www.downloadHandler.text);
+
+                if (result.error != null)
+                {
+                    UnityEngine.Debug.LogError("<WakaTime> Failed to send heartbeat to WakaTime. :(\n" + result.error);
+                }
+                else
+                {
+                    UnityEngine.Debug.Log("Sent heartbeat to WakaTime!! :D");
+                }
+            }));
+        }
         #endregion
 
         #region ViewHelpers
         static string[] GetProjectDropdownOptions()
         {
             var options = new List<string>();
-            s_ActiveProjectIndex = 0;
+            s_ActiveProjectIndex = 0; //
 
             // Initialize a request to get the projects if there are none
             if (s_UserProjects.Length == 0 && !s_RetrievingProjects)
@@ -471,8 +534,7 @@ namespace Bengsfort.Unity
         }
         #endregion
 
-        #region ApiResponseSchemas
-
+        #region ApiSchemas
         /// <summary>
         /// Generic API response object with configurable data type.
         /// </summary>
@@ -505,6 +567,8 @@ namespace Bengsfort.Unity
             public string full_name;
             public string id;
             public string photo;
+            public string last_plugin; // used for debugging
+            public string last_heartbeat; // used for debugging
 
             public override string ToString()
             {
@@ -536,6 +600,150 @@ namespace Bengsfort.Unity
                     "\tid: " + id + "\n" + 
                     "\tname: " + name + "\n";
             }
+        }
+
+        /// <summary>
+        /// Heartbeat response schema from WakaTime API.
+        /// </summary>
+        /// <remarks>
+        /// https://wakatime.com/developers#heartbeats
+        /// </remarks>
+        [Serializable]
+        public struct HeartbeatResponseSchema
+        {
+            public string id;
+            public string entity;
+            public string type;
+            public Int32 time;
+        }
+
+        /// <summary>
+        /// Schema for heartbeat postdata.
+        /// </summary>
+        /// <remarks>
+        /// https://wakatime.com/developers#heartbeats
+        /// </remarks>
+        [Serializable]
+        public struct HeartbeatSchema
+        {
+            // default to current scene?
+            public string entity;
+            // type of entity (app)
+            public string type;
+            // unix epoch timestamp
+            public Int32 time;
+            // project name
+            public string project;
+            // version control branch
+            public string branch;
+            // language (unity)
+            public string language;
+            // is this triggered by saving a file?
+            public bool is_write;
+            // What plugin sent this (duh, it us \m/)
+            public string plugin;
+
+            public HeartbeatSchema(string file, bool save = false)
+            {
+                entity = (file == string.Empty ? "Unsaved Scene" : file);
+                type = "app";
+                time = (Int32)(DateTime.UtcNow.Subtract(new DateTime(1970, 1, 1))).TotalSeconds;
+                project = ActiveProject.name;
+                branch = GitHelper.branch;
+                language = "Unity";
+                is_write = save;
+                plugin = "Unity-WakaTime";
+            }
+        }
+        #endregion
+
+        #region VersionControl
+        static class GitHelper
+        {
+            public static string branch
+            {
+                get
+                {
+                    if (EnableVersionControl)
+                        return GetCurrentBranch();
+                    else
+                        return "master";
+                }
+            }
+
+        static string GetGitPath()
+        {
+            var pathVar = Process.GetCurrentProcess().StartInfo.EnvironmentVariables["PATH"];
+            var pathSeparator = (Application.platform == RuntimePlatform.WindowsEditor ? ';' : ':');
+            var paths = pathVar.Split(new char[] { pathSeparator });
+            foreach (string path in paths)
+            {
+                if (File.Exists(Path.Combine(path, "git")))
+                    return path;
+            }
+            return String.Empty;
+        }
+
+        static string GetCurrentBranch()
+        {
+            var path = GetGitPath();
+            
+            if (string.IsNullOrEmpty(path))
+            {
+                UnityEngine.Debug.LogError(
+                    "<WakaTime> You don't have git installed. Disabling Version " +
+                    "Control support for you. It can be re-enabled from the preferences."
+                );
+                EnableVersionControl = false;
+                return "master";
+            }
+
+            ProcessStartInfo processInfo = new ProcessStartInfo
+            {
+                FileName = "git",
+                Arguments = "rev-parse --abbrev-ref HEAD",
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+                UseShellExecute = false,
+            };
+            var gitProcess = new Process();
+            gitProcess.StartInfo = processInfo;
+            
+            string output = String.Empty;
+            string error = String.Empty;
+            try
+            {
+                gitProcess.Start();
+                output = gitProcess.StandardOutput.ReadToEnd().Trim();
+                error = gitProcess.StandardError.ReadToEnd().Trim();
+                gitProcess.WaitForExit();
+            }
+            catch
+            {
+                // silence is golden
+            }
+            finally
+            {
+                if (gitProcess != null)
+                {
+                    gitProcess.Close();
+                }
+            }
+
+            if (!string.IsNullOrEmpty(error))
+            {
+                UnityEngine.Debug.LogError(
+                    "<WakaTime> There was an error getting your git branch. Disabling " +
+                    "version control support. It can be re-enabled from the preferences."
+                );
+                EnableVersionControl = false;
+                return "master";
+            }
+            
+            return output;
+        }
         }
         #endregion
     }
