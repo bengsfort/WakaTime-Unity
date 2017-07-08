@@ -86,39 +86,32 @@ namespace Bengsfort.Unity
             }
         }
 
-        // @TODO: Don't store this. Should probably instead just store the active
-        // one and only get the full list of projects when showing the preferences.
         /// <summary>
-        /// The list of the current users projects.
+        /// The project to log time against.
         /// </summary>
-        public static ProjectSchema[] Projects
+        public static ProjectSchema ActiveProject
         {
             get
             {
-                var json = EditorPrefs.GetString("WakaTime_Projects", "[]");
-                return JsonUtility.FromJson<ProjectSchema[]>(json);
+                var json = EditorPrefs.GetString("WakaTime_ActiveProject", "{}");
+                return JsonUtility.FromJson<ProjectSchema>(json);
             }
             set
             {
                 var json = JsonUtility.ToJson(value);
-                EditorPrefs.SetString("WakaTime_Projects", json);
+                EditorPrefs.SetString("WakaTime_ActiveProject", json);
             }
         }
 
         /// <summary>
-        /// The project to log time against.
+        /// Array of the users current projects.
         /// </summary>
-        public static int ActiveProject
-        {
-            get
-            {
-                return EditorPrefs.GetInt("WakaTime_ActiveProject", 0);
-            }
-            set
-            {
-                EditorPrefs.SetInt("WakaTime_ActiveProject", value);
-            }
-        }
+        private static ProjectSchema[] s_UserProjects = new ProjectSchema[0];
+
+        /// <summary>
+        /// The index of the currently active project in the array of projects.
+        /// </summary>
+        private static int s_ActiveProjectIndex;
 
         /// <summary>
         /// Are we currently retrieving projects?
@@ -253,7 +246,6 @@ namespace Bengsfort.Unity
             {
                 var result = JsonUtility.FromJson<ResponseSchema<ProjectSchema[]>>(www.downloadHandler.text);
 
-                Debug.Log(result.ToString());
                 // If the result returned an error, the key is likely no good
                 if (result.error != null)
                 {
@@ -265,13 +257,17 @@ namespace Bengsfort.Unity
 
                     foreach(ProjectSchema project in result.data)
                     {
-                        Debug.Log(project.ToString());
+                        if (Application.productName == project.name)
+                        {
+                            Debug.Log("<WakaTime> Found a project with identical name to current Unity project; setting it to active.");
+                            ActiveProject = project;
+                        }
                     }
 
-                    Projects = result.data;
+                    s_UserProjects = result.data;
                 }
 
-                // s_RetrievingProjects = false;
+                s_RetrievingProjects = false;
             }));
         }
         #endregion
@@ -279,18 +275,23 @@ namespace Bengsfort.Unity
         #region ViewHelpers
         static string[] GetProjectDropdownOptions()
         {
-            var projects = Projects;
             var options = new List<string>();
+            s_ActiveProjectIndex = 0;
+
             // Initialize a request to get the projects if there are none
-            if (projects.Length == 0 && !s_RetrievingProjects)
+            if (s_UserProjects.Length == 0 && !s_RetrievingProjects)
             {
                 GetUserProjects();
+                options.Add("Retrieving projects...");
+                return options.ToArray();
             }
 
             options.Add("Choose a project");
-            foreach(ProjectSchema project in projects)
+            for (int i = 0; i < s_UserProjects.Length; i++)
             {
-                options.Add(project.name);
+                options.Add(s_UserProjects[i].name);
+                if (ActiveProject.id == s_UserProjects[i].id)
+                    s_ActiveProjectIndex = i + 1;
             }
 
             return options.ToArray();
@@ -346,7 +347,8 @@ namespace Bengsfort.Unity
             // Project selection
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.PrefixLabel("Active Project");
-            ActiveProject = EditorGUILayout.Popup(ActiveProject, GetProjectDropdownOptions());
+            var projects = GetProjectDropdownOptions();
+            var projectSelection = EditorGUILayout.Popup(s_ActiveProjectIndex, projects);
             EditorGUILayout.EndHorizontal();
 
             EditorGUILayout.EndToggleGroup();
@@ -355,6 +357,12 @@ namespace Bengsfort.Unity
 
             if (GUI.changed)
             {
+                // Has the active project changed?
+                if (s_ActiveProjectIndex != projectSelection)
+                {
+                    ActiveProject = s_UserProjects[projectSelection];
+                }
+
                 // If the Api Key has changed, reset the validation
                 if (newApiKey != ApiKey)
                 {
@@ -443,7 +451,6 @@ namespace Bengsfort.Unity
 
             public override string ToString()
             {
-                var dataStr = "";
                 return
                     "UserResponseObject:\n" +
                     "\terror: " + error + "\n" +
