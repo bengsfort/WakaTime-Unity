@@ -87,6 +87,28 @@ namespace Bengsfort.Unity
         }
 
         /// <summary>
+        /// The information of the user retrieved when validating the Api key.
+        /// </summary>
+        /// <remarks>
+        /// This is currently unused. In the future it would be cool to have info
+        /// on the preferences view so you get a visual confirmation you're
+        /// correctly authenticated.
+        /// </remarks>
+        public static CurrentUserSchema User
+        {
+            get
+            {
+                var json = EditorPrefs.GetString("WakaTime_User", "{}");
+                return JsonUtility.FromJson<CurrentUserSchema>(json);
+            }
+            set
+            {
+                var json = JsonUtility.ToJson(value);
+                EditorPrefs.SetString("WakaTime_User", json);
+            }
+        }
+
+        /// <summary>
         /// The project to log time against.
         /// </summary>
         public static ProjectSchema ActiveProject
@@ -223,9 +245,8 @@ namespace Bengsfort.Unity
             }
             else
             {
-                // @todo: Store the information returned somewhere. Maybe the
-                // name + photo can be displayed in prefs? dunno.
                 Debug.Log("<WakaTime> Validated Api Key! You're good to go.");
+                User = result.data;
                 ApiKeyValidated = true;
             }
         }
@@ -352,9 +373,9 @@ namespace Bengsfort.Unity
             EditorGUILayout.EndHorizontal();
 
             EditorGUILayout.EndToggleGroup();
-
             EditorGUILayout.EndVertical();
 
+            // Handle any changed data
             if (GUI.changed)
             {
                 // Has the active project changed?
@@ -378,14 +399,29 @@ namespace Bengsfort.Unity
         #endregion
 
         #region HelperClasses
+        /// <summary>
+        /// A container class for async request enumerators and their 'done' callbacks.
+        /// </summary>
         public class RequestEnumerator
         {
+            /// <summary>
+            /// The initialized enumerator for this request.
+            /// </summary>
             public IEnumerator status;
 
+            /// <summary>
+            /// The operation representing this request.
+            /// </summary>
             AsyncOperation m_Request;
 
+            /// <summary>
+            /// The callback to be fired on completion of the request.
+            /// </summary>
             Action m_Callback;
 
+            /// <summary>
+            /// Instantiates an enumerator that waits for the request to finish.
+            /// </summary>
             public IEnumerator Start()
             {
                 while (!m_Request.isDone)
@@ -405,10 +441,20 @@ namespace Bengsfort.Unity
             }
         }
 
+        /// <summary>
+        /// A Helper class for dealing with async web calls since coroutines are
+        /// not really an option in edit mode.
+        /// </summary>
         public static class AsyncHelper
         {
+            /// <summary>
+            /// A queue of async request enumerators.
+            /// </summary>
             private static readonly Queue<RequestEnumerator> s_Requests = new Queue<RequestEnumerator>();
 
+            /// <summary>
+            /// Adds a request enumerator to the queue.
+            /// </summary>
             public static void Add(RequestEnumerator action)
             {
                 lock(s_Requests)
@@ -417,17 +463,19 @@ namespace Bengsfort.Unity
                 }
             }
 
+            /// <summary>
+            /// If there are queued requests, it will dequeue and fire them. If
+            /// the request is not finished, it will be added back to the queue.
+            /// </summary>
             public static void Execute()
             {
                 if (s_Requests.Count > 0)
                 {
                     RequestEnumerator action = null;
-
                     lock(s_Requests)
                     {
                         action = s_Requests.Dequeue();
                     }
-
                     // Re-queue the action if it is not complete
                     if (action.status.MoveNext())
                     {
@@ -441,7 +489,7 @@ namespace Bengsfort.Unity
         #region ApiResponseSchemas
 
         /// <summary>
-        /// User query API response object.
+        /// Generic API response object with configurable data type.
         /// </summary>
         [Serializable]
         public struct ResponseSchema<T>
@@ -461,6 +509,9 @@ namespace Bengsfort.Unity
         /// <summary>
         /// User schema from WakaTime API.
         /// </summary>
+        /// <remarks>
+        /// https://wakatime.com/developers#users
+        /// </remarks>
         [Serializable]
         public struct CurrentUserSchema
         {
@@ -482,6 +533,12 @@ namespace Bengsfort.Unity
             }
         }
 
+        /// <summary>
+        /// Project schema from WakaTime API.
+        /// </summary>
+        /// <remarks>
+        /// https://wakatime.com/developers#projects
+        /// </remarks>
         [Serializable]
         public struct ProjectSchema
         {
