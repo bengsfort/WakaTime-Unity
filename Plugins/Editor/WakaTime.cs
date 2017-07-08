@@ -404,6 +404,15 @@ namespace Bengsfort.Unity
             // Don't show the rest of the items if its not even enabled
             Enabled = EditorGUILayout.BeginToggleGroup("Enable WakaTime", Enabled);
 
+            EditorGUILayout.Separator();
+            EditorGUILayout.Separator();
+
+            // Should version control be enabled?
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.PrefixLabel("Enable Version Control");
+            EnableVersionControl = EditorGUILayout.Toggle(EnableVersionControl);
+            EditorGUILayout.EndHorizontal();
+            
             // API Key field
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.PrefixLabel("API Key (" + (ApiKeyValidated ? "Validated" : "Invalid") + ")");
@@ -420,6 +429,33 @@ namespace Bengsfort.Unity
             var projectSelection = EditorGUILayout.Popup(s_ActiveProjectIndex, projects);
             EditorGUILayout.EndHorizontal();
 
+            EditorGUILayout.Separator();
+            EditorGUILayout.Separator();
+
+            // Current settings information
+            EditorGUILayout.LabelField("Current Details", EditorStyles.boldLabel);
+            // User information
+            if (ApiKeyValidated)
+            {
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField("Logged in as: " + User.display_name);
+                EditorGUILayout.EndHorizontal();
+            }
+            // Project information
+            if (ActiveProject.name != null)
+            {
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField("Working on project: " + ActiveProject.name);
+                EditorGUILayout.EndHorizontal();
+            }
+
+            // Git information
+            if (EnableVersionControl)
+            {
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.PrefixLabel("Currently on branch: " + GitHelper.branch);
+                EditorGUILayout.EndHorizontal();
+            }
             EditorGUILayout.EndToggleGroup();
             EditorGUILayout.EndVertical();
 
