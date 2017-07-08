@@ -185,21 +185,6 @@ namespace Bengsfort.Unity
             }
         }
 
-        /// <summary>
-        /// Unity Asset Open Callback. This gets called when an asset is opening.
-        /// </summary>
-        [OnOpenAsset]
-        static bool OnOpenedAsset(int instanceID, int line)
-        {
-            Debug.Log("<WakaTime> Asset opening!");
-            // Not using WakaTime? L8r
-            if (!Enabled)
-                return false;
-
-            // @TODO: This could be used for logging?
-            return false;
-        }
-
         #endregion
 
         #region ApiCalls
