@@ -565,7 +565,7 @@ namespace Bengsfort.Unity
             // Parse the github version from the comments
             double githubVersion = Version;
             double.TryParse(
-                fileLines[5].Substring(fileLines[5].IndexOf('v')),
+                fileLines[5].Substring(fileLines[5].IndexOf('v') + 1),
                 out githubVersion
             );
             
