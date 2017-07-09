@@ -1,9 +1,15 @@
 # Change Log
 
-## v0.3 - in progress
+All dates in DD/MM/YY format.
+
+## v0.3 - 09/07/17
 
 - Added heartbeat throttling.
 - Changed how callback linking is handled.
+- Renamed some methods so they would make more sense.
+- Fixed issue where changing projects would fail due to an out of range index error.
+- Fixed issue where current branch would not show up in preferences.
+- Changed project retrieval to be synchronous and visualized by a cancellable progress window.
 
 ## v0.2 - 08/07/17
 

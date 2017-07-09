@@ -3,7 +3,7 @@
  *
  * WakaTime support for Unity.
  *
- * v0.2
+ * v0.3
  * Matt Bengston (@bengsfort) <bengston.matthew@gmail.com>
  */
 namespace Bengsfort.Unity
@@ -26,7 +26,7 @@ namespace Bengsfort.Unity
         /// <summary>
         /// The current plugin version.
         /// </summary>
-        public const double Version = 0.2;
+        public const double Version = 0.3;
 
         /// <summary>
         /// The author of the plugin.
@@ -175,7 +175,7 @@ namespace Bengsfort.Unity
                 return;
             
             // Initialize with a heartbeat
-            SendHeartbeat();
+            PostHeartbeat();
             
             // Frame callback
             EditorApplication.update += OnUpdate;
@@ -197,7 +197,7 @@ namespace Bengsfort.Unity
         [DidReloadScripts()]
         static void OnScriptReload()
         {
-            SendHeartbeat();
+            PostHeartbeat();
             // Relink all of our callbacks
             LinkCallbacks(true);
         }
@@ -207,7 +207,7 @@ namespace Bengsfort.Unity
         /// </summary>
         static void OnPlaymodeStateChanged()
         {
-            SendHeartbeat();
+            PostHeartbeat();
         }
 
         /// <summary>
@@ -215,7 +215,7 @@ namespace Bengsfort.Unity
         /// </summary>
         static void OnPropertyContextMenu(GenericMenu menu, SerializedProperty property)
         {
-            SendHeartbeat();
+            PostHeartbeat();
         }
 
         /// <summary>
@@ -223,7 +223,7 @@ namespace Bengsfort.Unity
         /// </summary>
         static void OnHierarchyWindowChanged()
         {
-            SendHeartbeat();
+            PostHeartbeat();
         }
 
         /// <summary>
@@ -231,7 +231,7 @@ namespace Bengsfort.Unity
         /// </summary>
         static void OnSceneSaved(Scene scene)
         {
-            SendHeartbeat(true);
+            PostHeartbeat(true);
         }
 
         /// <summary>
@@ -239,7 +239,7 @@ namespace Bengsfort.Unity
         /// </summary>
         static void OnSceneOpened(Scene scene, OpenSceneMode mode)
         {
-            SendHeartbeat();
+            PostHeartbeat();
         }
 
         /// <summary>
@@ -249,9 +249,10 @@ namespace Bengsfort.Unity
         /// @TODO: the send heartbeat needs to be modified to accept a scene overload.
         /// If it's overloaded, it should use that instead Then this can switch to
         /// OnSceneClosed instead of Closing.
+        /// </remarks>
         static void OnSceneClosing(Scene scene, bool removingScene)
         {
-            SendHeartbeat();
+            PostHeartbeat();
         }
 
         /// <summary>
@@ -259,12 +260,12 @@ namespace Bengsfort.Unity
         /// </summary>
         static void OnSceneCreated(Scene scene, NewSceneSetup setup, NewSceneMode mode)
         {
-            SendHeartbeat();
+            PostHeartbeat();
         }
         #endregion
 
         #region ApiCalls
-        static string GetApiUrl(string path)
+        static string FormatApiUrl(string path)
         {
             return ApiBase + path + "?api_key=" + ApiKey;
         }
@@ -277,7 +278,7 @@ namespace Bengsfort.Unity
         /// provided key. If it is a valid key, it shouldn't return an error.
         /// </remarks>
         /// <param name="key">The API key.</param>
-        static void ValidateApiKey()
+        static void GetCurrentUser()
         {
             // If the user has deliberatly entered nothing, then reset the key
             if (ApiKey == "")
@@ -287,7 +288,7 @@ namespace Bengsfort.Unity
             }
 
             // Initialize a GET request
-            UnityWebRequest auth = UnityWebRequest.Get(GetApiUrl("users/current"));
+            UnityWebRequest auth = UnityWebRequest.Get(FormatApiUrl("users/current"));
             var req = auth.Send();
 
             // Display a progress bar while the request is active
@@ -299,8 +300,8 @@ namespace Bengsfort.Unity
                     req.progress
                 );
             }
-            // Clear the progress bar and parse the result
-            EditorUtility.ClearProgressBar();
+            
+            // Parse the result
             var result = JsonUtility.FromJson<ResponseSchema<CurrentUserSchema>>(auth.downloadHandler.text);
             // If the result returned an error, the key is likely no good
             if (result.error != null)
@@ -314,6 +315,9 @@ namespace Bengsfort.Unity
                 User = result.data;
                 ApiKeyValidated = true;
             }
+
+            // Clear the progress bar
+            EditorUtility.ClearProgressBar();
         }
 
         /// <summary>
@@ -325,39 +329,62 @@ namespace Bengsfort.Unity
                 return;
             
             s_RetrievingProjects = true;
-            var www = UnityWebRequest.Get(GetApiUrl("users/current/projects"));
+            var www = UnityWebRequest.Get(FormatApiUrl("users/current/projects"));
+            var request = www.Send();
 
-            // Enqueue handling of the request
-            AsyncHelper.Add(new RequestEnumerator(www.Send(), () =>
+            bool cancelled = false;
+
+            // Wait until we've finished, but allow the user to cancel
+            while (!request.isDone)
             {
-                var result = JsonUtility.FromJson<ResponseSchema<ProjectSchema[]>>(www.downloadHandler.text);
+                cancelled = EditorUtility.DisplayCancelableProgressBar(
+                    "WakaTime Api",
+                    "Getting your projects from WakaTime...",
+                    request.progress
+                );
+            }
 
-                // If the result returned an error, the key is likely no good
-                if (result.error != null)
-                {
-                    UnityEngine.Debug.LogError("<WakaTime> Failed to get projects from WakaTime API.");
-                }
-                else
-                {
-                    UnityEngine.Debug.Log("<WakaTime> Successfully retrieved project list from WakaTime API.");
-
-                    foreach(ProjectSchema project in result.data)
-                    {
-                        if (Application.productName == project.name)
-                        {
-                            UnityEngine.Debug.Log("<WakaTime> Found a project with identical name to current Unity project; setting it to active.");
-                            ActiveProject = project;
-                        }
-                    }
-
-                    s_UserProjects = result.data;
-                }
-
+            // Abort the operation and return if the user cancelled.
+            if (cancelled)
+            {
                 s_RetrievingProjects = false;
-            }));
+                www.Abort();
+                return;
+            }
+
+            // Parse the result
+            var result = JsonUtility.FromJson<ResponseSchema<ProjectSchema[]>>(www.downloadHandler.text);
+
+            // If the result returned an error, the key is likely no good
+            if (result.error != null)
+            {
+                UnityEngine.Debug.LogError("<WakaTime> Failed to get projects from WakaTime API.");
+            }
+            else
+            {
+                UnityEngine.Debug.Log("<WakaTime> Successfully retrieved project list from WakaTime API.");
+
+                foreach(ProjectSchema project in result.data)
+                {
+                    if (Application.productName == project.name)
+                    {
+                        UnityEngine.Debug.Log("<WakaTime> Found a project with identical name to current Unity project; setting it to active.");
+                        ActiveProject = project;
+                    }
+                }
+
+                s_UserProjects = result.data;
+            }
+
+            s_RetrievingProjects = false;
+            EditorUtility.ClearProgressBar();
         }
 
-        static void SendHeartbeat(bool fromSave = false)
+        /// <summary>
+        /// Sends a heartbeat to the WakaTime API.
+        /// </summary>
+        /// <param name="fromSave">Was this triggered from a save?</param>
+        static void PostHeartbeat(bool fromSave = false)
         {
             if (!ApiKeyValidated)
                 return;
@@ -373,15 +400,13 @@ namespace Bengsfort.Unity
 
             // If it hasn't been longer than the last heartbeat buffer, ignore if
             // the heartbeat isn't triggered by a save or the scene changing.
-            UnityEngine.Debug.Log("time elapsed since last heartbeat " + (heartbeat.time - s_LastHeartbeat.time));
-            UnityEngine.Debug.Log("Heartbeat buffer is: " + HeartbeatBuffer);
             if ((heartbeat.time - s_LastHeartbeat.time < HeartbeatBuffer) && !fromSave
                 && (heartbeat.entity == s_LastHeartbeat.entity))
                 return;
 
             var heartbeatJson = JsonUtility.ToJson(heartbeat);
             var www = UnityWebRequest.Post(
-                GetApiUrl("users/current/heartbeats"),
+                FormatApiUrl("users/current/heartbeats"),
                 string.Empty
             );
             // Manually add an upload handler so the data isn't corrupted
@@ -407,6 +432,10 @@ namespace Bengsfort.Unity
         #endregion
 
         #region Helpers
+        /// <summary>
+        /// Subscribes the plugin event handlers to the editor events.
+        /// </summary>
+        /// <param name="clean">Should we remove old callbacks before linking?</param>
         static void LinkCallbacks(bool clean = false)
         {
             // Remove old callbacks before adding them back again
@@ -443,13 +472,19 @@ namespace Bengsfort.Unity
 
             // Initialize a request to get the projects if there are none
             if (s_UserProjects.Length == 0 && !s_RetrievingProjects)
-            {
                 GetUserProjects();
+            
+            // If we are trying to get the projects, let the user know
+            if (s_RetrievingProjects)
+            {
                 options.Add("Retrieving projects...");
                 return options.ToArray();
             }
 
+            // Add a default no-project option first
             options.Add("Choose a project");
+            
+            // Iterate through the projects and add the names to the list
             for (int i = 0; i < s_UserProjects.Length; i++)
             {
                 options.Add(s_UserProjects[i].name);
@@ -459,7 +494,6 @@ namespace Bengsfort.Unity
 
             return options.ToArray();
         }
-
         #endregion
 
         #region PreferencesView
@@ -547,7 +581,7 @@ namespace Bengsfort.Unity
             if (EnableVersionControl)
             {
                 EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.PrefixLabel("Currently on branch: " + GitHelper.branch);
+                EditorGUILayout.LabelField("Currently on branch: " + GitHelper.branch);
                 EditorGUILayout.EndHorizontal();
             }
             EditorGUILayout.EndToggleGroup();
@@ -559,7 +593,7 @@ namespace Bengsfort.Unity
                 // Has the active project changed?
                 if (s_ActiveProjectIndex != projectSelection)
                 {
-                    ActiveProject = s_UserProjects[projectSelection];
+                    ActiveProject = s_UserProjects[Mathf.Max(projectSelection - 1, 0)];
                 }
 
                 // If the Api Key has changed, reset the validation
@@ -570,7 +604,7 @@ namespace Bengsfort.Unity
                 }
 
                 if (validateKeyButton && !ApiKeyValidated)
-                    ValidateApiKey();
+                    GetCurrentUser();
             }
         }
 
