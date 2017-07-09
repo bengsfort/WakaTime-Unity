@@ -3,7 +3,7 @@
  *
  * WakaTime support for Unity.
  *
- * v0.3
+ * v0.4
  * Matt Bengston (@bengsfort) <bengston.matthew@gmail.com>
  */
 namespace Bengsfort.Unity
@@ -26,7 +26,7 @@ namespace Bengsfort.Unity
         /// <summary>
         /// The current plugin version.
         /// </summary>
-        public const double Version = 0.3;
+        public const double Version = 0.4;
 
         /// <summary>
         /// The author of the plugin.
