@@ -45,6 +45,11 @@ namespace Bengsfort.Unity
 
         #region properties
         /// <summary>
+        /// The minimum time required to elapse before sending normal heartbeats.
+        /// </summary>
+        public const Int32 HeartbeatBuffer = 120;
+
+        /// <summary>
         /// Whether the plugin is enabled or not.
         /// </summary>
         public static bool Enabled
@@ -157,6 +162,11 @@ namespace Bengsfort.Unity
         /// Are we currently retrieving projects?
         /// </summary>
         private static bool s_RetrievingProjects;
+
+        /// <summary>
+        /// The last heartbeat sent.
+        /// </summary>
+        private static HeartbeatResponseSchema s_LastHeartbeat;
         #endregion
 
         static WakaTime()
@@ -165,19 +175,11 @@ namespace Bengsfort.Unity
                 return;
             
             // Initialize with a heartbeat
-            SendHeartbeatPost();
+            SendHeartbeat();
             
             // Frame callback
             EditorApplication.update += OnUpdate;
-            // Callbacks for in-scene modifications
-            EditorApplication.playmodeStateChanged += OnPlaymodeStateChanged;
-            EditorApplication.contextualPropertyMenu += OnPropertyContextMenu;
-            EditorApplication.hierarchyWindowChanged += OnHierarchyWindowChanged;
-            // Callbacks for scene modifications
-            EditorSceneManager.sceneSaved += OnSceneSaved;
-            EditorSceneManager.sceneOpened += OnSceneOpened;
-            EditorSceneManager.sceneClosing += OnSceneClosing;
-            EditorSceneManager.newSceneCreated += OnSceneCreated;
+            LinkCallbacks();
         }
 
         #region EventHandlers
@@ -195,26 +197,9 @@ namespace Bengsfort.Unity
         [DidReloadScripts()]
         static void OnScriptReload()
         {
-            // We're back in the editor doing things! start new sesh?
-            SendHeartbeatPost();
-
-            // Relink all of our callbacks...
-            // @todo is this necessary? seems excessive...
-            EditorApplication.playmodeStateChanged -= OnPlaymodeStateChanged;
-            EditorApplication.playmodeStateChanged += OnPlaymodeStateChanged;
-            EditorApplication.contextualPropertyMenu -= OnPropertyContextMenu;
-            EditorApplication.contextualPropertyMenu += OnPropertyContextMenu;
-            EditorApplication.hierarchyWindowChanged -= OnHierarchyWindowChanged;
-            EditorApplication.hierarchyWindowChanged += OnHierarchyWindowChanged;
-            // Scene callbacks
-            EditorSceneManager.sceneSaved -= OnSceneSaved;
-            EditorSceneManager.sceneSaved += OnSceneSaved;
-            EditorSceneManager.sceneOpened -= OnSceneOpened;
-            EditorSceneManager.sceneOpened += OnSceneOpened;
-            EditorSceneManager.sceneClosing -= OnSceneClosing;
-            EditorSceneManager.sceneClosing += OnSceneClosing;
-            EditorSceneManager.newSceneCreated -= OnSceneCreated;
-            EditorSceneManager.newSceneCreated += OnSceneCreated;
+            SendHeartbeat();
+            // Relink all of our callbacks
+            LinkCallbacks(true);
         }
 
         /// <summary>
@@ -222,7 +207,7 @@ namespace Bengsfort.Unity
         /// </summary>
         static void OnPlaymodeStateChanged()
         {
-            SendHeartbeatPost();
+            SendHeartbeat();
         }
 
         /// <summary>
@@ -230,7 +215,7 @@ namespace Bengsfort.Unity
         /// </summary>
         static void OnPropertyContextMenu(GenericMenu menu, SerializedProperty property)
         {
-            SendHeartbeatPost();
+            SendHeartbeat();
         }
 
         /// <summary>
@@ -238,7 +223,7 @@ namespace Bengsfort.Unity
         /// </summary>
         static void OnHierarchyWindowChanged()
         {
-            SendHeartbeatPost();
+            SendHeartbeat();
         }
 
         /// <summary>
@@ -246,7 +231,7 @@ namespace Bengsfort.Unity
         /// </summary>
         static void OnSceneSaved(Scene scene)
         {
-            SendHeartbeatPost(true);
+            SendHeartbeat(true);
         }
 
         /// <summary>
@@ -254,7 +239,7 @@ namespace Bengsfort.Unity
         /// </summary>
         static void OnSceneOpened(Scene scene, OpenSceneMode mode)
         {
-            SendHeartbeatPost();
+            SendHeartbeat();
         }
 
         /// <summary>
@@ -266,7 +251,7 @@ namespace Bengsfort.Unity
         /// OnSceneClosed instead of Closing.
         static void OnSceneClosing(Scene scene, bool removingScene)
         {
-            SendHeartbeatPost();
+            SendHeartbeat();
         }
 
         /// <summary>
@@ -274,7 +259,7 @@ namespace Bengsfort.Unity
         /// </summary>
         static void OnSceneCreated(Scene scene, NewSceneSetup setup, NewSceneMode mode)
         {
-            SendHeartbeatPost();
+            SendHeartbeat();
         }
         #endregion
 
@@ -372,25 +357,35 @@ namespace Bengsfort.Unity
             }));
         }
 
-        static void SendHeartbeatPost(bool fromSave = false)
+        static void SendHeartbeat(bool fromSave = false)
         {
             if (!ApiKeyValidated)
                 return;
             
             // Create our heartbeat
-            var heartbeat = JsonUtility.ToJson(new HeartbeatSchema(
+            var heartbeat = new HeartbeatSchema(
                 Path.Combine(
                     Application.dataPath,
                     EditorSceneManager.GetActiveScene().path.Substring("Assets/".Length)
                 ),
                 fromSave
-            ));
+            );
+
+            // If it hasn't been longer than the last heartbeat buffer, ignore if
+            // the heartbeat isn't triggered by a save or the scene changing.
+            UnityEngine.Debug.Log("time elapsed since last heartbeat " + (heartbeat.time - s_LastHeartbeat.time));
+            UnityEngine.Debug.Log("Heartbeat buffer is: " + HeartbeatBuffer);
+            if ((heartbeat.time - s_LastHeartbeat.time < HeartbeatBuffer) && !fromSave
+                && (heartbeat.entity == s_LastHeartbeat.entity))
+                return;
+
+            var heartbeatJson = JsonUtility.ToJson(heartbeat);
             var www = UnityWebRequest.Post(
                 GetApiUrl("users/current/heartbeats"),
                 string.Empty
             );
             // Manually add an upload handler so the data isn't corrupted
-            www.uploadHandler = new UploadHandlerRaw(System.Text.Encoding.UTF8.GetBytes(heartbeat));
+            www.uploadHandler = new UploadHandlerRaw(System.Text.Encoding.UTF8.GetBytes(heartbeatJson));
             // Set the content type to json since it defaults to www form data
             www.SetRequestHeader("Content-Type", "application/json");
             // Send the request
@@ -404,14 +399,40 @@ namespace Bengsfort.Unity
                 }
                 else
                 {
-                    // Silence is golden
                     // UnityEngine.Debug.Log("Sent heartbeat to WakaTime!! :D");
+                    s_LastHeartbeat = result.data;
                 }
             }));
         }
         #endregion
 
-        #region ViewHelpers
+        #region Helpers
+        static void LinkCallbacks(bool clean = false)
+        {
+            // Remove old callbacks before adding them back again
+            if (clean)
+            {
+                // Scene modification callbacks
+                EditorApplication.playmodeStateChanged -= OnPlaymodeStateChanged;
+                EditorApplication.contextualPropertyMenu -= OnPropertyContextMenu;
+                EditorApplication.hierarchyWindowChanged -= OnHierarchyWindowChanged;
+                // Scene state callbacks
+                EditorSceneManager.sceneSaved -= OnSceneSaved;
+                EditorSceneManager.sceneOpened -= OnSceneOpened;
+                EditorSceneManager.sceneClosing -= OnSceneClosing;
+                EditorSceneManager.newSceneCreated -= OnSceneCreated;
+            }
+            // Scene modification callbacks
+            EditorApplication.playmodeStateChanged += OnPlaymodeStateChanged;
+            EditorApplication.contextualPropertyMenu += OnPropertyContextMenu;
+            EditorApplication.hierarchyWindowChanged += OnHierarchyWindowChanged;
+            // Scene state callbacks
+            EditorSceneManager.sceneSaved += OnSceneSaved;
+            EditorSceneManager.sceneOpened += OnSceneOpened;
+            EditorSceneManager.sceneClosing += OnSceneClosing;
+            EditorSceneManager.newSceneCreated += OnSceneCreated;
+        }
+
         /// <summary>
         /// Get all of the projects from WakaTime and then return a list of their names.
         /// </summary>
