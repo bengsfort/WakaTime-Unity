@@ -2,6 +2,10 @@
 
 All dates in DD/MM/YY format.
 
+## v0.5 - 09/07/17
+
+- Added an update plugin button to the preferences.
+
 ## v0.4 - 09/07/17
 
 - Fixed issue where heartbeat would fail on unsaved scenes.

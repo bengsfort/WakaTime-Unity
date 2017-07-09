@@ -1,10 +1,11 @@
 /*
  * Unity WakaTime Support
+ * WakaTime logging for the Unity Editor.
  *
- * WakaTime support for Unity.
- *
- * v0.4
- * Matt Bengston (@bengsfort) <bengston.matthew@gmail.com>
+ * Version
+ * v0.5
+ * Author:
+ * Matt Bengston @bengsfort <bengston.matthew@gmail.com>
  */
 namespace Bengsfort.Unity
 {
@@ -26,7 +27,7 @@ namespace Bengsfort.Unity
         /// <summary>
         /// The current plugin version.
         /// </summary>
-        public const double Version = 0.4;
+        public const double Version = 0.5;
 
         /// <summary>
         /// The author of the plugin.
@@ -42,6 +43,11 @@ namespace Bengsfort.Unity
         /// The base URL for all API calls.
         /// </summary>
         public const string ApiBase = "https://wakatime.com/api/v1/";
+
+        /// <summary>
+        /// The URL to the latest plugin file.
+        /// </summary>
+        public const string PluginFile = "https://raw.githubusercontent.com/bengsfort/WakaTime-Unity/master/Plugins/Editor/WakaTime.cs";
 
         #region properties
         /// <summary>
@@ -332,24 +338,23 @@ namespace Bengsfort.Unity
             var www = UnityWebRequest.Get(FormatApiUrl("users/current/projects"));
             var request = www.Send();
 
-            bool cancelled = false;
-
             // Wait until we've finished, but allow the user to cancel
             while (!request.isDone)
             {
-                cancelled = EditorUtility.DisplayCancelableProgressBar(
+                var cancelled = EditorUtility.DisplayCancelableProgressBar(
                     "WakaTime Api",
                     "Getting your projects from WakaTime...",
                     request.progress
                 );
-            }
 
-            // Abort the operation and return if the user cancelled.
-            if (cancelled)
-            {
-                s_RetrievingProjects = false;
-                www.Abort();
-                return;
+                // Abort the operation and return if the user cancelled.
+                if (cancelled)
+                {
+                    s_RetrievingProjects = false;
+                    www.Abort();
+                    EditorUtility.ClearProgressBar();
+                    return;
+                }
             }
 
             // Parse the result
@@ -501,6 +506,102 @@ namespace Bengsfort.Unity
 
             return options.ToArray();
         }
+
+        /// <summary>
+        /// Pulls the latest version of the plugin from Github then injects it
+        /// into the project.
+        /// </summary>
+        /// <remarks>
+        /// This pulls the latest file than parses the top comment to determine
+        /// the version. It could also send a GET to Github for the latest release
+        /// than parse that, but then it would need to make yet another GET to
+        /// download the new file; so I decided to go with this way instead.
+        /// </remarks>
+        static void UpdatePlugin()
+        {
+            // Retrieve the plugin file from Github.
+            var www = UnityWebRequest.Get(PluginFile);
+            www.Send();
+            
+            // Show a cancelable progress bar while we're downloading the file.
+            while (!www.isDone)
+            {
+                var cancelled = EditorUtility.DisplayCancelableProgressBar(
+                    "WakaTime Plugin",
+                    "Checking for updates...",
+                    www.downloadProgress
+                );
+                // If the user cancels, abort and clear the progress bar.
+                if (cancelled)
+                {
+                    www.Abort();
+                    EditorUtility.ClearProgressBar();
+                    return;
+                }
+            }
+            
+            // Clear the progress bar
+            EditorUtility.ClearProgressBar();
+
+            // If we have an error, log it
+            if (www.error != null)
+            {
+                UnityEngine.Debug.LogError(
+                    "<WakaTime> There was an error when trying to check for updates." +
+                    " Please try again or file an issue on GitHub.\n" + www.error
+                );
+                return;
+            }
+
+            // Split the file by new line characters to make it easier to find
+            // the version number in the top comments.
+            var githubFile = www.downloadHandler.text;
+            var fileLines = githubFile.Split('\n');
+            
+            // If we don't even have 5 lines, something went haywire and we should exit
+            if (fileLines.Length < 5)
+                return;
+            
+            // Parse the github version from the comments
+            double githubVersion = Version;
+            double.TryParse(
+                fileLines[5].Substring(fileLines[5].IndexOf('v')),
+                out githubVersion
+            );
+            
+            // Thar be an update!
+            if (githubVersion > Version)
+            {
+                var updateDialog = EditorUtility.DisplayDialog(
+                    "WakaTime Update " + Version + " -> " + githubVersion,
+                    "There's a shiny new version of the plugin available! Would " +
+                    "you like to update?",
+                    "Sure!", "Nah"
+                );
+                
+                // Don't bother if the user doesn't want to update.
+                if (!updateDialog)
+                    return;
+                
+                // Get the path of the asset so we can overwrite it on disk with
+                // the new version of the plugin.
+                var assetGUID = AssetDatabase.FindAssets("t:Script WakaTime")[0];
+                var assetPath = AssetDatabase.GUIDToAssetPath(assetGUID);
+                var path = Application.dataPath + assetPath
+                    .Substring("Assets".Length)
+                    .Replace('/', System.IO.Path.DirectorySeparatorChar);
+
+                // Is the file writable?
+                var fileInfo = new FileInfo(path);
+                fileInfo.IsReadOnly = false;
+
+                // Write to the file
+                File.WriteAllText(path, githubFile);
+
+                // Force Unity to update the file
+                AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);
+            }
+        }
         #endregion
 
         #region PreferencesView
@@ -524,11 +625,17 @@ namespace Bengsfort.Unity
             // Plugin Meta
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.HelpBox(string.Format("v{0:0.0} by @bengsfort", Version), MessageType.Info);
-            var githubButton = GUILayout.Button("Github", GUILayout.Height(38));
+            EditorGUILayout.BeginVertical();
+            var githubButton = GUILayout.Button("Github");
+            var updateButton = GUILayout.Button("Update");
+            EditorGUILayout.EndVertical();
             EditorGUILayout.EndHorizontal();
 
             if (githubButton)
                 Application.OpenURL(GithubRepo);
+            
+            if (updateButton)
+                UpdatePlugin();
 
             EditorGUILayout.Separator();
 
