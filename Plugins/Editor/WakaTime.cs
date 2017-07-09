@@ -22,7 +22,7 @@ namespace Bengsfort.Unity
     using UnityEditor.SceneManagement;
 
     [InitializeOnLoad]
-    public class WakaTime
+    public static class WakaTime
     {
         /// <summary>
         /// The current plugin version.
@@ -251,11 +251,6 @@ namespace Bengsfort.Unity
         /// <summary>
         /// Send a heartbeat every time a scene is closed.
         /// </summary>
-        /// <remarks>
-        /// @TODO: the send heartbeat needs to be modified to accept a scene overload.
-        /// If it's overloaded, it should use that instead Then this can switch to
-        /// OnSceneClosed instead of Closing.
-        /// </remarks>
         static void OnSceneClosing(Scene scene, bool removingScene)
         {
             PostHeartbeat();
@@ -283,7 +278,6 @@ namespace Bengsfort.Unity
         /// API Key is validated by sending a GET for the current user using the
         /// provided key. If it is a valid key, it shouldn't return an error.
         /// </remarks>
-        /// <param name="key">The API key.</param>
         static void GetCurrentUser()
         {
             // If the user has deliberatly entered nothing, then reset the key
@@ -1001,6 +995,9 @@ namespace Bengsfort.Unity
                 catch
                 {
                     // silence is golden
+                    // There shouldn't be any errors here since we are redirecting
+                    // standard error
+                    UnityEngine.Debug.LogError("<WakaTime> There was an error getting git branch.");
                 }
                 finally
                 {
