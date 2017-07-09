@@ -2,6 +2,12 @@
 
 All dates in DD/MM/YY format.
 
+## v0.4 - 09/07/17
+
+- Fixed issue where heartbeat would fail on unsaved scenes.
+- Added error messages to error logs.
+- Fixed some formatting issues.
+
 ## v0.3 - 09/07/17
 
 - Added heartbeat throttling.

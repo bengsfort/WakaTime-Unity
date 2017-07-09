@@ -390,11 +390,14 @@ namespace Bengsfort.Unity
                 return;
             
             // Create our heartbeat
+            // If the current scene is empty it's an unsaved scene; so don't
+            // try to determine exact file position in that instance.
+            var currentScene = EditorSceneManager.GetActiveScene().path;
             var heartbeat = new HeartbeatSchema(
-                Path.Combine(
+                currentScene != string.Empty ? Path.Combine(
                     Application.dataPath,
-                    EditorSceneManager.GetActiveScene().path.Substring("Assets/".Length)
-                ),
+                    currentScene.Substring("Assets/".Length)
+                ) : string.Empty,
                 fromSave
             );
 
@@ -420,11 +423,15 @@ namespace Bengsfort.Unity
 
                 if (result.error != null)
                 {
-                    UnityEngine.Debug.LogError("<WakaTime> Failed to send heartbeat to WakaTime. :(\n" + result.error);
+                    UnityEngine.Debug.LogError(
+                        "<WakaTime> Failed to send heartbeat to WakaTime. If this " +
+                        "continues, please disable the plugin and submit an issue " +
+                        "on Github.\n" + result.error
+                    );
                 }
                 else
                 {
-                    // UnityEngine.Debug.Log("Sent heartbeat to WakaTime!! :D");
+                    // UnityEngine.Debug.Log("Sent heartbeat to WakaTime");
                     s_LastHeartbeat = result.data;
                 }
             }));
@@ -578,7 +585,7 @@ namespace Bengsfort.Unity
             }
 
             // Git information
-            if (EnableVersionControl)
+            if (Enabled && EnableVersionControl)
             {
                 EditorGUILayout.BeginHorizontal();
                 EditorGUILayout.LabelField("Currently on branch: " + GitHelper.branch);
@@ -835,79 +842,80 @@ namespace Bengsfort.Unity
                 }
             }
 
-        static string GetGitPath()
-        {
-            var pathVar = Process.GetCurrentProcess().StartInfo.EnvironmentVariables["PATH"];
-            var pathSeparator = (Application.platform == RuntimePlatform.WindowsEditor ? ';' : ':');
-            var paths = pathVar.Split(new char[] { pathSeparator });
-            foreach (string path in paths)
+            static string GetGitPath()
             {
-                if (File.Exists(Path.Combine(path, "git")))
-                    return path;
-            }
-            return String.Empty;
-        }
-
-        static string GetCurrentBranch()
-        {
-            var path = GetGitPath();
-            
-            if (string.IsNullOrEmpty(path))
-            {
-                UnityEngine.Debug.LogError(
-                    "<WakaTime> You don't have git installed. Disabling Version " +
-                    "Control support for you. It can be re-enabled from the preferences."
-                );
-                EnableVersionControl = false;
-                return "master";
-            }
-
-            ProcessStartInfo processInfo = new ProcessStartInfo
-            {
-                FileName = "git",
-                Arguments = "rev-parse --abbrev-ref HEAD",
-                RedirectStandardInput = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-                UseShellExecute = false,
-            };
-            var gitProcess = new Process();
-            gitProcess.StartInfo = processInfo;
-            
-            string output = String.Empty;
-            string error = String.Empty;
-            try
-            {
-                gitProcess.Start();
-                output = gitProcess.StandardOutput.ReadToEnd().Trim();
-                error = gitProcess.StandardError.ReadToEnd().Trim();
-                gitProcess.WaitForExit();
-            }
-            catch
-            {
-                // silence is golden
-            }
-            finally
-            {
-                if (gitProcess != null)
+                var pathVar = Process.GetCurrentProcess().StartInfo.EnvironmentVariables["PATH"];
+                var pathSeparator = (Application.platform == RuntimePlatform.WindowsEditor ? ';' : ':');
+                var paths = pathVar.Split(new char[] { pathSeparator });
+                foreach (string path in paths)
                 {
-                    gitProcess.Close();
+                    if (File.Exists(Path.Combine(path, "git")))
+                        return path;
                 }
+                return String.Empty;
             }
 
-            if (!string.IsNullOrEmpty(error))
+            static string GetCurrentBranch()
             {
-                UnityEngine.Debug.LogError(
-                    "<WakaTime> There was an error getting your git branch. Disabling " +
-                    "version control support. It can be re-enabled from the preferences."
-                );
-                EnableVersionControl = false;
-                return "master";
+                var path = GetGitPath();
+                
+                if (string.IsNullOrEmpty(path))
+                {
+                    UnityEngine.Debug.LogError(
+                        "<WakaTime> You don't have git installed. Disabling Version " +
+                        "Control support for you. It can be re-enabled from the preferences."
+                    );
+                    EnableVersionControl = false;
+                    return "master";
+                }
+
+                ProcessStartInfo processInfo = new ProcessStartInfo
+                {
+                    FileName = "git",
+                    Arguments = "rev-parse --abbrev-ref HEAD",
+                    RedirectStandardInput = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                };
+                var gitProcess = new Process();
+                gitProcess.StartInfo = processInfo;
+                
+                string output = String.Empty;
+                string error = String.Empty;
+                try
+                {
+                    gitProcess.Start();
+                    output = gitProcess.StandardOutput.ReadToEnd().Trim();
+                    error = gitProcess.StandardError.ReadToEnd().Trim();
+                    gitProcess.WaitForExit();
+                }
+                catch
+                {
+                    // silence is golden
+                }
+                finally
+                {
+                    if (gitProcess != null)
+                    {
+                        gitProcess.Close();
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(error))
+                {
+                    UnityEngine.Debug.LogError(
+                        "<WakaTime> There was an error getting your git branch. Disabling " +
+                        "version control support. It can be re-enabled from the preferences.\n" +
+                        error
+                    );
+                    EnableVersionControl = false;
+                    return "master";
+                }
+                
+                return output;
             }
-            
-            return output;
-        }
         }
         #endregion
     }
