@@ -42,7 +42,7 @@ namespace Bengsfort.Unity
         /// <summary>
         /// The base URL for all API calls.
         /// </summary>
-        public const string ApiBase = "https://wakatime.com/api/v1/";
+        public const string ApiBase = "https://api.wakatime.com/api/v1/";
 
         /// <summary>
         /// The URL to the latest plugin file.
